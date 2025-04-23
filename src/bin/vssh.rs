@@ -11,7 +11,6 @@ use nix::unistd::{chdir, execvp, fork, ForkResult};
 
 fn main() -> Result<()> {
     loop {
-        // Display prompt with current directory
         let cwd = env::current_dir()?;
         print!("{}$ ", cwd.display());
         io::stdout().flush()?;
@@ -24,12 +23,10 @@ fn main() -> Result<()> {
             continue;
         }
 
-        // Handle 'exit' command
         if input == "exit" {
             break;
         }
 
-        // Handle 'cd' command
         if input.starts_with("cd ") {
             let dir = input[3..].trim();
             if let Err(e) = chdir(Path::new(dir)) {
@@ -38,14 +35,12 @@ fn main() -> Result<()> {
             continue;
         }
 
-        // Check for background execution
         let (input, background) = if input.ends_with('&') {
             (input.trim_end_matches('&').trim(), true)
         } else {
             (input, false)
         };
 
-        // Parse and execute the command line
         if let Err(e) = execute_line(input, background) {
             eprintln!("Error: {}", e);
         }
@@ -54,13 +49,11 @@ fn main() -> Result<()> {
 }
 
 fn execute_line(line: &str, background: bool) -> Result<()> {
-    // Split the line into pipeline segments
     let mut segments: Vec<&str> = line.split('|').map(str::trim).collect();
     if segments.is_empty() {
         return Ok(());
     }
 
-    // Check for input redirection in the first segment
     let mut input_file = None;
     if segments[0].contains('<') {
         let parts: Vec<&str> = segments[0].split('<').map(str::trim).collect();
@@ -68,7 +61,6 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
         input_file = Some(parts[1]);
     }
 
-    // Check for output redirection in the last segment
     let mut output_file = None;
     let last = segments.len() - 1;
     if segments[last].contains('>') {
@@ -77,7 +69,6 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
         output_file = Some(parts[1]);
     }
 
-    // Create pipes manually using libc functions
     let mut pipes = Vec::new();
     for _ in 0..segments.len() - 1 {
         let mut fds = [0, 0];
@@ -89,7 +80,6 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
         }
     }
 
-    // Store child PIDs to wait for them later
     let mut child_pids = Vec::new();
 
     for i in 0..segments.len() {
@@ -100,7 +90,6 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
 
         match unsafe { fork()? } {
             ForkResult::Child => {
-                // Input redirection for the first command
                 if i == 0 {
                     if let Some(file) = input_file {
                         let infile = File::open(file)?;
@@ -110,7 +99,6 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
                     }
                 }
 
-                // Output redirection for the last command
                 if i == segments.len() - 1 {
                     if let Some(file) = output_file {
                         let outfile = File::create(file)?;
@@ -120,21 +108,18 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
                     }
                 }
 
-                // If not the first command, set stdin to the read end of the previous pipe
                 if i > 0 {
                     unsafe {
                         libc::dup2(pipes[i - 1].0, libc::STDIN_FILENO);
                     }
                 }
 
-                // If not the last command, set stdout to the write end of the current pipe
                 if i < segments.len() - 1 {
                     unsafe {
                         libc::dup2(pipes[i].1, libc::STDOUT_FILENO);
                     }
                 }
 
-                // Close all pipe fds in the child process
                 for &(read_fd, write_fd) in &pipes {
                     unsafe {
                         libc::close(read_fd);
@@ -142,9 +127,7 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
                     }
                 }
 
-                // Execute the command
                 execvp(&args[0], &args)?;
-                // If execvp returns, an error occurred
                 std::process::exit(1);
             }
             ForkResult::Parent { child } => {
@@ -156,7 +139,6 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
         }
     }
 
-    // Close all pipe fds in the parent
     for &(read_fd, write_fd) in &pipes {
         unsafe {
             libc::close(read_fd);
@@ -164,7 +146,6 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
         }
     }
 
-    // Wait for child processes if not running in background
     if !background {
         for pid in child_pids {
             let status = waitpid(pid, None)?;
@@ -195,7 +176,6 @@ fn execute_line(line: &str, background: bool) -> Result<()> {
     Ok(())
 }
 
-// Helper function to convert command string to Vec<CString>
 fn externalize(command: &str) -> Vec<CString> {
     command
         .split_whitespace()
